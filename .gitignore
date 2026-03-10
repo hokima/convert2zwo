@@ -1,0 +1,32 @@
+node_modules/
+out/
+dist/
+.DS_Store
+*.local
+
+# Electron builder output
+release/
+
+# OS
+Thumbs.db
+
+# Editor
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# TypeScript cache
+tsconfig.web.tsbuildinfo
+
+# Personal files
+*.jpg
+*.jpeg
+*.png
+*.docx
