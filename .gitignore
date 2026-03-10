@@ -28,5 +28,7 @@ tsconfig.web.tsbuildinfo
 # Personal files
 *.jpg
 *.jpeg
-*.png
 *.docx
+# Exclude loose PNGs but keep the app icon
+*.png
+!resources/icon.png

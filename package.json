@@ -39,6 +39,7 @@
   "build": {
     "appId": "com.convert2zwo.app",
     "productName": "Convert2ZWO",
+    "icon": "resources/icon.png",
     "directories": {
       "output": "release"
     },
