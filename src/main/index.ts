@@ -17,6 +17,12 @@ function loadEncryptedKeys(): Record<string, string> {
 
 const isDev = process.env['NODE_ENV'] === 'development'
 
+// Only these key names may be saved/loaded
+const ALLOWED_KEYS = new Set(['cf_api_key', 'claude_api_key'])
+
+// Only requests to Cloudflare AI are permitted through the fetch proxy
+const ALLOWED_FETCH_HOST = 'https://api.cloudflare.com/'
+
 function createWindow(): void {
   const mainWindow = new BrowserWindow({
     width: 1200,
@@ -29,7 +35,9 @@ function createWindow(): void {
     backgroundColor: '#0f0f1a',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
-      sandbox: false
+      sandbox: false,          // must stay false: preload uses Node crypto via safeStorage IPC
+      contextIsolation: true,  // explicit — ensures preload runs in isolated context
+      webSecurity: true
     }
   })
 
@@ -38,7 +46,10 @@ function createWindow(): void {
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
-    shell.openExternal(details.url)
+    // Only open safe HTTPS links in the system browser
+    if (details.url.startsWith('https://')) {
+      shell.openExternal(details.url)
+    }
     return { action: 'deny' }
   })
 
@@ -69,19 +80,20 @@ app.on('window-all-closed', () => {
 function setupIpcHandlers() {
   // Secure key storage (OS keychain via safeStorage)
   ipcMain.handle('keys:save', (_event, { key, value }: { key: string; value: string }) => {
+    if (!ALLOWED_KEYS.has(key)) throw new Error('Invalid key name')
+    if (typeof value !== 'string' || value.length > 2000) throw new Error('Invalid value')
+    if (!safeStorage.isEncryptionAvailable()) throw new Error('OS encryption unavailable — key not saved')
     const keys = loadEncryptedKeys()
-    keys[key] = safeStorage.isEncryptionAvailable()
-      ? safeStorage.encryptString(value).toString('base64')
-      : value
+    keys[key] = safeStorage.encryptString(value).toString('base64')
     fs.writeFileSync(getKeysFilePath(), JSON.stringify(keys))
   })
 
   ipcMain.handle('keys:load', (_event, key: string) => {
+    if (!ALLOWED_KEYS.has(key)) throw new Error('Invalid key name')
     const keys = loadEncryptedKeys()
     if (!keys[key]) return ''
-    return safeStorage.isEncryptionAvailable()
-      ? safeStorage.decryptString(Buffer.from(keys[key], 'base64'))
-      : keys[key]
+    if (!safeStorage.isEncryptionAvailable()) return ''
+    return safeStorage.decryptString(Buffer.from(keys[key], 'base64'))
   })
 
   // Detect Zwift workouts folder
@@ -104,26 +116,35 @@ function setupIpcHandlers() {
 
   // Save ZWO file
   ipcMain.handle('zwift:saveWorkout', async (_event, { filename, content, zwiftPath }) => {
+    // Strip directory components to prevent path traversal
+    const safeFilename = path.basename(filename)
+    if (!safeFilename || safeFilename !== filename) {
+      return { success: false, message: 'שם קובץ לא חוקי' }
+    }
+
     let savePath = zwiftPath
 
     if (!savePath || !fs.existsSync(savePath)) {
       const { filePath } = await dialog.showSaveDialog({
         title: 'שמור אימון Zwift',
-        defaultPath: filename,
+        defaultPath: safeFilename,
         filters: [{ name: 'Zwift Workout', extensions: ['zwo'] }]
       })
       if (!filePath) return { success: false, message: 'בוטל' }
       savePath = filePath
     } else {
-      savePath = path.join(savePath, filename)
+      savePath = path.join(savePath, safeFilename)
     }
 
     fs.writeFileSync(savePath, content, 'utf-8')
     return { success: true, path: savePath }
   })
 
-  // Proxy AI API requests (avoids CORS in renderer)
+  // Proxy AI API requests (avoids CORS in renderer) — Cloudflare only
   ipcMain.handle('ai:fetch', async (_event, { url, headers, body }) => {
+    if (typeof url !== 'string' || !url.startsWith(ALLOWED_FETCH_HOST)) {
+      throw new Error('URL not allowed')
+    }
     const res = await fetch(url, { method: 'POST', headers, body })
     const text = await res.text()
     return { ok: res.ok, status: res.status, text }
@@ -138,6 +159,8 @@ function setupIpcHandlers() {
       properties: ['openFile']
     })
     if (!filePaths[0]) return null
+    const stat = fs.statSync(filePaths[0])
+    if (stat.size > 20 * 1024 * 1024) throw new Error('התמונה גדולה מדי (מקסימום 20MB)')
     const data = fs.readFileSync(filePaths[0])
     return {
       path: filePaths[0],

@@ -73,7 +73,8 @@ export default function App() {
         if (old) {
           setApiKey(old)
           window.api.saveKey('cf_api_key', old)
-          localStorage.removeItem('cf_api_key')
+            .then(() => localStorage.removeItem('cf_api_key'))
+            .catch(() => {/* keep localStorage copy if secure save failed */})
         }
       }
     })
